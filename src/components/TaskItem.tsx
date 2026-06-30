@@ -1,14 +1,17 @@
-import type { Task } from '../state/tasksStore'
+import type { Task } from "../state/tasksStore";
 
 type Props = {
-  task: Task
-  onToggle: (id: string) => void
-  onRemove: (id: string) => void
-}
+  task: Task;
+  onToggle: (id: string) => void;
+  onRemove: (id: string) => void;
+};
 
 export function TaskItem({ task, onToggle, onRemove }: Props) {
   return (
-    <li className={`task-item ${task.done ? 'task-item--done' : ''}`}>
+    <li
+      className={`task-item ${task.done ? "task-item--done" : ""}`}
+      aria-checked={task.done}
+    >
       <label className="task-item__label">
         <input
           type="checkbox"
