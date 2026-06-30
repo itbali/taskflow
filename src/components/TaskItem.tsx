@@ -19,6 +19,7 @@ export function TaskItem({ task, onToggle, onRemove }: Props) {
           onChange={() => onToggle(task.id)}
         />
         <span className="task-item__title">{task.title}</span>
+        {task.done && <span className="task-item__badge">выполнено</span>}
       </label>
       <button
         className="task-item__remove"
@@ -28,5 +29,5 @@ export function TaskItem({ task, onToggle, onRemove }: Props) {
         ×
       </button>
     </li>
-  )
+  );
 }
