@@ -1,0 +1,19 @@
+# Зависимости
+node_modules/
+
+# Результат сборки
+dist/
+*.tsbuildinfo
+
+# Локальное окружение и секреты
+.env
+.env.local
+*.local
+
+# Логи
+*.log
+npm-debug.log*
+
+# Системный мусор
+.DS_Store
+Thumbs.db
