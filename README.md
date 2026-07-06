@@ -33,11 +33,13 @@
 | 5   | Создание удалёнки и клонирование          | репозиторий на GitHub, `remote add`/`push -u`, публикация тегов, clone по HTTPS/SSH/ZIP, clone vs fork | [docs/module-5.md](docs/module-5.md)   |
 | 6   | Удалённые репозитории и совместная работа | `fetch` vs `pull`, tracking-ветки/upstream, Pull Request, ревью, защита веток                          | [docs/module-6.md](docs/module-6.md)   |
 | 7   | Переписывание истории: rebase             | `rebase`, interactive rebase (squash/fixup/reword/edit/drop/reorder), `--force-with-lease`             | [docs/module-7.md](docs/module-7.md)   |
-| 8   | Восстановление и хирургия по истории      | `reflog`, `reset` (soft/mixed/hard), `revert`, `cherry-pick`, `stash`, `bisect`                        | [docs/module-8.md](docs/module-8.md)   |
-| 9   | Патчи: обмен изменениями через файлы       | `git diff`/`apply` (`--check`/`-R`/`--3way`), `format-patch`/`am`, патч vs PR/cherry-pick              | [docs/module-9.md](docs/module-9.md)   |
-| 10  | Про-инструментарий                        | хуки (Husky/commitlint), `rerere`, worktrees, `filter-repo`, подпись коммитов, plumbing                | [docs/module-10.md](docs/module-10.md) |
-| 11  | Командные workflow и стратегии            | Git Flow / GitHub Flow / trunk-based, Conventional Commits, semver, CHANGELOG, CI/CD                   | [docs/module-11.md](docs/module-11.md) |
-| 12  | Капстоун — «всё сразу»                    | полный жизненный цикл фичи на одном командном сценарии                                                 | [docs/module-12.md](docs/module-12.md) |
+| 8   | Страховочная сетка: reflog и reset        | `reflog`, `reset` (soft/mixed/hard)                                                                    | [docs/module-8.md](docs/module-8.md)   |
+| 9   | Точечная отмена: checkout/restore и stash | `checkout -- <file>` vs `restore`, `restore --source`/`--staged`, `stash push`/`pop`/`apply`/`branch`  | [docs/module-9.md](docs/module-9.md)   |
+| 10  | Хирургия по истории: revert/cherry-pick/bisect | `revert` (в т.ч. merge `-m 1`), `cherry-pick`, `bisect start`/`good`/`bad`/`run`                   | [docs/module-10.md](docs/module-10.md) |
+| 11  | Патчи: обмен изменениями через файлы       | `git diff`/`apply` (`--check`/`-R`/`--3way`), `format-patch`/`am`, патч vs PR/cherry-pick              | [docs/module-11.md](docs/module-11.md) |
+| 12  | Про-инструментарий                        | хуки (Husky/commitlint), `rerere`, worktrees, `filter-repo`, подпись коммитов, plumbing                | [docs/module-12.md](docs/module-12.md) |
+| 13  | Командные workflow и стратегии            | Git Flow / GitHub Flow / trunk-based, Conventional Commits, semver, CHANGELOG, CI/CD                   | [docs/module-13.md](docs/module-13.md) |
+| 14  | Капстоун — «всё сразу»                    | полный жизненный цикл фичи на одном командном сценарии                                                 | [docs/module-14.md](docs/module-14.md) |
 
 В каждом модуле есть раздел **«Домашнее задание»**: оно отрабатывает навыки урока, но
 на отдельном сценарии — **не дублирует** разобранный в документе живой пример.
@@ -65,7 +67,7 @@ npm run build     # продакшен-сборка
 taskflow/
 ├─ README.md
 ├─ docs/                       # пошаговые документы модулей курса
-│  ├─ module-0.md … module-12.md
+│  ├─ module-0.md … module-14.md
 ├─ package.json
 ├─ .gitignore
 ├─ .gitattributes
@@ -90,9 +92,9 @@ taskflow/
 
 ## 🎬 Где режиссировать «сцены» курса
 
-- **Конфликты (модули 3, 12):** меняйте `src/utils/taskUtils.ts` (`sortTasks`/`filterTasks`)
+- **Конфликты (модули 3, 14):** меняйте `src/utils/taskUtils.ts` (`sortTasks`/`filterTasks`)
   и/или `src/state/tasksStore.ts` в двух ветках, правя один и тот же блок.
-- **Bisect (модуль 8):** внедрите регрессию в `taskUtils.ts`, которую ловит
+- **Bisect (модуль 10):** внедрите регрессию в `taskUtils.ts`, которую ловит
   `tests/taskUtils.test.ts`, затем `git bisect run npm test`.
 - **Фичи (модули 1, 3):** «отметить выполненной», фильтры/сортировка/приоритеты — в
   `TaskItem.tsx`, `tasksStore.ts` и `App.tsx`.
