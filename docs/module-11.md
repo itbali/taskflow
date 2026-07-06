@@ -1,773 +1,511 @@
-# Модуль 11. Командные workflow и стратегии
+# Модуль 9. Патчи: обмен изменениями через файлы
 
-> **Цель модуля.** Научиться *выбирать и внедрять* процесс работы с Git под конкретную
-> команду, а не копировать чужой вслепую. К концу модуля вы можете аргументированно
-> сравнить **Git Flow / GitHub Flow / trunk-based / release-ветки**, владеете
-> **Conventional Commits** и **semantic versioning**, и понимаете, как теги, защита
-> веток и CI/CD связывают историю с релизами.
+> **Цель модуля.** Научиться переносить изменения **без общего remote и без PR** —
+> обычным файлом. К концу модуля вы своими словами объясняете разницу между
+> **`git diff`/`git apply`** (правки уровня файлов, без коммитов) и
+> **`git format-patch`/`git am`** (целые коммиты с автором, датой и сообщением),
+> умеете проверить патч перед наложением и откатить его обратно.
 
-Этот документ — разбор «живого примера» модуля 11 на проекте `taskflow`. Часть выводов
-команд ниже — **настоящие**, снятые на свежем клоне репозитория. У вас будут отличаться
-только хеши (SHA-1) — они зависят от содержимого, имени/почты и времени коммита.
-Структура и смысл вывода — те же.
+Этот документ — пошаговый разбор «живого примера» модуля 9 на проекте `taskflow`.
+Все выводы команд ниже — **настоящие**. Чтобы ничего не сломать, всю работу делаем в
+**отдельных учебных ветках** от `main`. Отличаться у вас будут только хеши (SHA-1) и
+строки с датами/автором в заголовках патчей.
 
-Те фрагменты, которые невозможно «снять» локально без GitHub/CI (защита веток,
-`CODEOWNERS`, GitHub Actions, авто-CHANGELOG от `semantic-release`), приведены как
-**конфиги-примеры** и явно помечены `пример` / `пример вывода`. Их формат настоящий и
-рабочий, но конкретные числа/ссылки в выводе будут вашими.
-
-> ⚠️ Все живые команды выполнялись на отдельном клоне в `/tmp/taskflow-m11`, чтобы не
-> трогать основной репозиторий. Если повторяете — делайте так же:
-> ```bash
-> git clone /path/to/taskflow /tmp/taskflow-m11
-> cd /tmp/taskflow-m11
-> ```
+> 💡 Зачем это, если есть Pull Request (модуль 6)? PR — штатный путь, **когда есть общий
+> remote**. Патч-файл выручает, когда его нет или он не нужен: приложить правку к
+> багрепорту, переслать изменение коллеге в мессенджере, перенести коммиты между двумя
+> **несвязанными** репозиториями, сохранить правку «на потом» вне веток. Это базовый
+> навык, на котором десятилетиями держится разработка по почтовым рассылкам (ядро Linux
+> и тысячи проектов).
 
 ---
 
 ## Мысленная модель (прочитать до команд)
 
-Четыре идеи, на которых держится выбор workflow:
+Три идеи, на которых держится весь модуль.
 
-1. **Workflow — это компромисс между скоростью и контролем.** Чем больше «ворот»
-   (review, release-ветки, QA-стадии), тем безопаснее, но медленнее. Чем короче путь
-   «коммит → прод», тем быстрее обратная связь, но тем выше требования к тестам и
-   автоматике. Не существует «правильного» процесса — есть подходящий *под размер
-   команды и темп релизов*.
+1. **Патч — это просто текст диффа.** Тот самый unified diff, что вы уже видели в
+   `git diff` и в `git add -p` (модуль 1): заголовок `@@ -a,b +c,d @@` и строки с `+`/`-`.
+   Сохранили этот текст в файл — получили **патч**. Применили в другом месте — изменения
+   воспроизвелись. Никакой магии, никакой сети.
 
-2. **Ветка — это дешёвый указатель, а не «папка с кодом».** Из модуля 0: ветка — это
-   просто файл с хешем коммита. Поэтому стоимость стратегии определяется не «ветками
-   как таковыми», а тем, *сколько времени* ветка живёт в отрыве от `main` и *насколько
-   часто* вы интегрируетесь. Долгоживущая ветка = накопленный конфликт = боль слияния.
-
-3. **Тег — это иммутабельный якорь релиза.** Ветки двигаются, теги — нет. Аннотированный
-   тег (`git tag -a`) — это отдельный объект с автором, датой и сообщением (теги подробно
-   разобраны в модуле 4). Релиз — это «коммит, на который указывает тег `vX.Y.Z`».
-
-4. **История коммитов — это документация, если её писать по конвенции.** Conventional
-   Commits превращают сообщения коммитов в машиночитаемый поток, из которого
-   автоматически выводятся **версия** (semver) и **CHANGELOG**. Сообщение коммита
-   перестаёт быть «для себя на пять минут» и становится частью релизного процесса.
+2. **Два уровня патчей — выбирайте по тому, что переносите.**
 
    ```
-   тип(scope): краткое описание        ← Conventional Commit
-        │                  │
-        ▼                  ▼
-   fix → PATCH        строка в CHANGELOG
-   feat → MINOR       (раздел Features/Fixes)
-   feat! → MAJOR
+                  что переносит           метаданные        чем накладывать
+   git diff   →   правки (working/index)  нет               git apply
+   format-patch → целые КОММИТЫ           автор/дата/текст   git am
    ```
+
+   - **`git diff` → `git apply`** — слепок правок **без истории**. `apply` ничего не
+     коммитит: просто кладёт изменения в рабочее дерево. Идеально «передать незакоммиченное».
+   - **`git format-patch` → `git am`** — каждый коммит превращается в `.patch`-файл с
+     `From:`, `Date:`, `Subject:`. `am` **воссоздаёт коммиты** на другой стороне как
+     настоящие коммиты. Это «коммиты, упакованные в письма».
+
+3. **Патч vs cherry-pick (модуль 8).** `cherry-pick` переносит коммит **внутри одного
+   репозитория** (есть доступ к объектной базе). `format-patch`/`am` делают то же самое,
+   но **между репозиториями**, у которых нет общей базы и общего remote — единственный
+   канал связи — текстовый файл.
 
 ---
 
-## Часть A. Стратегии ветвления
+## Шаг 0. Готовим площадку
 
-### A.1. Четыре стратегии за одну минуту
-
-```
-GitHub Flow (одна вечная ветка main + короткие фиче-ветки):
-
-  main  ──●───────●───────●───────●──►   (всегда деплоима)
-           \     / \     /
-   feat:    ●───●   ●───●                 живёт часы–дни, PR, merge, удалить
-
-
-Trunk-based (почти прямо в trunk; фиче-флаги вместо долгих веток):
-
-  main  ──●─●─●─●─●─●─●─●─●──►            десятки коммитов/день
-           ↑ короткоживущие ветки (<1 дня) или прямые коммиты
-           незрелый код прячется за feature flag
-
-
-Release-ветки (фиксируем срез под релиз, main едет дальше):
-
-  main     ──●───●───●───●───●──►
-                    \
-  release/1.1        ●──●(fix)──●  → tag v1.1.0    параллельно правим релиз
-
-
-Git Flow (develop + release + hotfix + main):
-
-  main     ──●───────────────────●(tag)──●(tag)──►
-              \                  /       /
-  develop      ●──●──●──●──●──●─●──────●─────►
-                  \    /        \     /
-  feature/release  ●──●          ●───●(release/hotfix)
-```
-
-### A.2. Таблица сравнения
-
-| Критерий | GitHub Flow | Trunk-based | Release-ветки | Git Flow |
-|---|---|---|---|---|
-| Долгоживущих веток | 1 (`main`) | 1 (`trunk`/`main`) | 1 + временные `release/*` | 2 (`main`+`develop`) + temp |
-| Время жизни фиче-ветки | часы–дни | минуты–часы (или прямо в trunk) | дни | дни–недели |
-| Темп релизов | непрерывный / по готовности | несколько раз в день (CD) | по расписанию (sprint/квартал) | по расписанию, тяжёлые релизы |
-| Размер команды | маленькая–средняя | средняя–большая (зрелый CI) | средняя–большая | средняя–большая |
-| Поддержка нескольких версий в проде | плохо | плохо | хорошо | хорошо |
-| Требования к автотестам/CI | высокие | очень высокие | средние | средние |
-| Когнитивная нагрузка | низкая | низкая (но нужна культура флагов) | средняя | высокая |
-| Главный риск | прямой merge без ревью | сломать trunk | забыть back-merge fix в main | тяжесть в маленькой команде |
-
-**Как выбирать (правило большого пальта):**
-- Команда 2–8, веб-сервис, деплой по готовности → **GitHub Flow**.
-- Команда зрелая, CD несколько раз в день, дисциплина флагов → **trunk-based**.
-- Нужно поддерживать версии у клиентов / релизы по расписанию → **release-ветки** (как
-  лёгкая надстройка над GitHub Flow) или **Git Flow** (если стадий QA много).
-- Десктоп/мобайл/библиотека с долгим циклом и параллельными версиями → **Git Flow**.
-
----
-
-## Часть B. Живой пример — GitHub Flow на `taskflow`
-
-GitHub Flow: от `main` отводим короткую фиче-ветку, делаем 1–2 коммита, открываем PR,
-сливаем обратно, ветку удаляем. Прогон на свежем клоне (все выводы настоящие):
+Всё делаем в своём `taskflow`. Заведём ветку, где появится новая функция-хелпер — её мы
+и будем «упаковывать» в патчи.
 
 ```bash
-git checkout -b feat/filter-active
-# ... правим src/utils/taskUtils.ts: добавили countActive() ...
-git add -A
-git commit -m "feat(tasks): add countActive helper"
-```
-
-**Вывод коммита:**
-
-```
-[feat/filter-active 37558bf] feat(tasks): add countActive helper
- 1 file changed, 5 insertions(+)
-```
-
-В реальной команде здесь вы бы сделали `git push -u origin feat/filter-active` и открыли
-PR на GitHub. Локально эмулируем «merge PR» с явным merge-коммитом (`--no-ff`), чтобы в
-истории осталась видимая «точка слияния PR»:
-
-```bash
-git checkout main
-git merge --no-ff feat/filter-active -m "Merge PR #12: feat(tasks): add countActive helper"
-git branch -d feat/filter-active
+git switch -c feature/count-done main
+git log --oneline -1
 ```
 
 **Вывод:**
 
 ```
-Merge made by the 'ort' strategy.
- src/utils/taskUtils.ts | 5 +++++
- 1 file changed, 5 insertions(+)
-Deleted branch feat/filter-active (was 37558bf).
+428affa docs: module 8 walkthrough (reflog, reset, bisect)
 ```
 
-**Граф после GitHub Flow** (`git log --oneline --graph --all`):
-
-```
-*   a25b7ee Merge PR #12: feat(tasks): add countActive helper
-|\
-| * 37558bf feat(tasks): add countActive helper
-|/
-* 2381b21 docs: add module 0 walkthrough (objects, three trees, first commit)
-* 6061d7c chore: initial taskflow scaffold (Vite + React + TS)
-```
-
-**Что важно:** ветка прожила один коммит и сразу влилась. `main` остаётся деплоимой в
-любой момент. Это и есть суть GitHub Flow — минимум долгоживущих веток.
-
-> 💡 `--no-ff` (no fast-forward) заставляет Git создать merge-коммит даже когда можно
-> «перемотать» указатель. В реальной жизни этим управляет настройка PR на GitHub
-> («Create a merge commit» vs «Squash» vs «Rebase»). Squash-merge даёт ровно один
-> чистый коммит на PR — частый выбор для GitHub Flow.
+В `src/utils/taskUtils.ts` уже есть `countRemaining` (считает невыполненные). Допишем
+парную `countDone` — на ней удобно показать весь цикл патчей.
 
 ---
 
-## Часть C. Живой пример — Git Flow: релиз + параллельный хотфикс
+## Шаг 1. Снять незакоммиченные правки — `git diff > файл.patch`
 
-Теперь сложный сценарий, ради которого Git Flow вообще существует: мы **готовим релиз
-1.1** в release-ветке, и в этот же момент **в проде находят баг**, который надо
-выпустить как **хотфикс 1.0.1**, не дожидаясь релиза.
-
-Сначала закрепим текущий `main` как первый релиз:
+Сначала самый частый случай: правки **ещё не закоммичены**, а поделиться ими надо.
+Добавляем функцию, но **не коммитим**:
 
 ```bash
-git tag -a v1.0.0 -m "Release v1.0.0"
-```
+cat >> src/utils/taskUtils.ts <<'EOF'
 
-> `-a` = annotated (аннотированный) тег — для релизов всегда используйте именно его
-> (разница лёгкий/аннотированный, публикация и semver разобраны в модуле 4).
-
-### C.1. develop + feature
-
-```bash
-git checkout -b develop main
-git checkout -b feature/sort-by-title develop
-# ... добавили src/utils/sort.ts ...
-git add -A && git commit -m "feat(tasks): add sortByTitle helper"
-git checkout develop
-git merge --no-ff feature/sort-by-title -m "Merge feature/sort-by-title into develop"
-git branch -d feature/sort-by-title
-```
-
-### C.2. Открываем release-ветку
-
-```bash
-git checkout -b release/1.1 develop
-git commit --allow-empty -m "chore(release): bump version to 1.1.0"
-```
-
-В release-ветке только стабилизация: бамп версии, правка CHANGELOG, мелкие багфиксы.
-Новые фичи сюда **не добавляют** — они продолжают литься в `develop`.
-
-### C.3. Параллельный хотфикс от `main`
-
-Баг в проде. Хотфикс отводится **от `main`** (не от develop!), потому что в develop уже
-есть незарелиженный код:
-
-```bash
-git checkout -b hotfix/1.0.1 main
-# ... добавили src/utils/guard.ts: safeCount() ...
-git add -A && git commit -m "fix(tasks): guard count against null input"
-```
-
-**Закрываем хотфикс** — вливаем в `main`, ставим тег, и обязательно **back-merge** в
-develop (иначе фикс потеряется в следующем релизе):
-
-```bash
-git checkout main
-git merge --no-ff hotfix/1.0.1 -m "Merge hotfix/1.0.1 into main"
-git tag -a v1.0.1 -m "Hotfix release v1.0.1"
-git checkout develop
-git merge --no-ff hotfix/1.0.1 -m "Merge hotfix/1.0.1 into develop"
-git branch -d hotfix/1.0.1
-```
-
-> ⚠️ Если хотфикс и фича трогают **один файл**, back-merge даст реальный конфликт:
-> ```
-> CONFLICT (content): Merge conflict in src/utils/taskUtils.ts
-> Automatic merge failed; fix conflicts and then commit the result.
-> ```
-> Это не баг процесса, а его цена: в Git Flow один фикс приходится мёрджить в несколько
-> веток, и каждое слияние — потенциальный конфликт. Разрешается как обычно (модуль 3):
-> правим файл, `git add`, `git commit`.
-
-### C.4. Закрываем релиз
-
-Хотфикс попал и в `main`, и в `develop`, но **не в release-ветку** — подтягиваем его
-туда, потом вливаем релиз в `main` (тег!) и обратно в `develop`:
-
-```bash
-git checkout release/1.1
-git merge --no-ff develop -m "Merge develop (hotfix) into release/1.1"
-git checkout main
-git merge --no-ff release/1.1 -m "Merge release/1.1 into main"
-git tag -a v1.1.0 -m "Release v1.1.0"
-git checkout develop
-git merge --no-ff release/1.1 -m "Merge release/1.1 into develop"
-git branch -d release/1.1
-```
-
-### C.5. Итоговый граф (настоящий вывод)
-
-`git log --oneline --graph --all --decorate`:
-
-```
-*   927ede7 (HEAD -> develop) Merge release/1.1 into develop
-|\
-| | *   b385ce3 (tag: v1.1.0, main) Merge release/1.1 into main
-| | |\
-| | |/
-| |/|
-| * |   33c70c7 Merge develop (hotfix) into release/1.1
-| |\ \
-| |/ /
-|/| |
-* | |   5d9379b Merge hotfix/1.0.1 into develop
-|\ \ \
-| | * | 4d48086 chore(release): bump version to 1.1.0
-| |/ /
-|/| |
-* | |   50446c0 Merge feature/sort-by-title into develop
-|\ \ \
-| * | | 048c5fb feat(tasks): add sortByTitle helper
-|/ / /
-| | * d80c7b5 (tag: v1.0.1) Merge hotfix/1.0.1 into main
-| |/|
-|/|/
-| * 56231c2 fix(tasks): guard count against null input
-|/
-*   a25b7ee (tag: v1.0.0) Merge PR #12: feat(tasks): add countActive helper
-|\
-| * 37558bf feat(tasks): add countActive helper
-|/
-* 2381b21 docs: add module 0 walkthrough (objects, three trees, first commit)
-* 6061d7c chore: initial taskflow scaffold (Vite + React + TS)
-```
-
-**Сравните с GitHub Flow выше.** Один и тот же объём работы (одна фича + один фикс)
-породил кучу merge-коммитов и переплетённый граф. Зато у нас есть три релиза с тегами:
-
-```
-$ git tag -n
-v1.0.0          Release v1.0.0
-v1.0.1          Hotfix release v1.0.1
-v1.1.0          Release v1.1.0
-```
-
-А «то, что видит пользователь `main`» (только релизные точки) — это
-`git log --oneline --graph --first-parent main`:
-
-```
-* b385ce3 Merge release/1.1 into main
-* d80c7b5 Merge hotfix/1.0.1 into main
-* a25b7ee Merge PR #12: feat(tasks): add countActive helper
-* 2381b21 docs: add module 0 walkthrough (objects, three trees, first commit)
-* 6061d7c chore: initial taskflow scaffold (Vite + React + TS)
-```
-
-**Вывод сравнения:** Git Flow даёт строгий контроль над параллельными версиями ценой
-сложности. Для одного веб-сервиса с непрерывным деплоем это оверкилл — GitHub Flow или
-trunk-based решают ту же задачу проще. Git Flow окупается, когда вам *действительно*
-нужно поддерживать несколько версий в проде.
-
----
-
-## Часть D. Conventional Commits + Semantic Versioning
-
-### D.1. Формат Conventional Commits
-
-```
-<type>(<scope>)<!>: <subject>
-<пустая строка>
-<body>
-<пустая строка>
-<footer>
-```
-
-| Тип | Назначение | Влияние на semver |
-|---|---|---|
-| `feat` | новая функциональность | **MINOR** (0.x.0) |
-| `fix` | исправление бага | **PATCH** (0.0.x) |
-| `docs` | только документация | — |
-| `style` | форматирование, без логики | — |
-| `refactor` | рефактор без фич и фиксов | — |
-| `perf` | улучшение производительности | PATCH |
-| `test` | тесты | — |
-| `build` / `ci` | сборка / CI-конфиг | — |
-| `chore` | рутина (зависимости, релиз) | — |
-
-**Breaking change** = MAJOR. Помечается двумя способами:
-
-```
-feat(api)!: drop support for legacy task format
-
-BREAKING CHANGE: tasks without an id are no longer accepted.
-```
-
-Восклицательный знак `!` после типа/scope **и/или** футер `BREAKING CHANGE:` → версия
-прыгает в **MAJOR** (1.0.0 → 2.0.0).
-
-### D.2. Semantic Versioning (semver)
-
-```
-   MAJOR . MINOR . PATCH
-     │       │       └── обратно совместимые багфиксы (fix)
-     │       └────────── обратно совместимые фичи (feat)
-     └────────────────── несовместимые изменения (feat! / BREAKING CHANGE)
-```
-
-Связь прямая: тип коммита → бамп версии → тег `vX.Y.Z`. Именно это и автоматизируют
-инструменты ниже.
-
-### D.3. Реальные conventional-коммиты в нашем графе
-
-Коммиты из живого примера уже написаны по конвенции — посмотрим их как поток для
-будущего CHANGELOG (`git log v1.0.0..v1.1.0 --no-merges --pretty=format:"%s (%h)"`):
-
-```
-fix(tasks): guard count against null input (56231c2)
-chore(release): bump version to 1.1.0 (4d48086)
-feat(tasks): add sortByTitle helper (048c5fb)
-```
-
-Здесь есть `feat` (→ MINOR) и `fix` (→ PATCH). Старшее изменение — `feat`, значит от
-1.0.x версия поднимается до **1.1.0**. `chore` в CHANGELOG не попадёт. Логику бампа
-делает машина — нам остаётся писать корректные сообщения.
-
-### D.4. Автогенерация версии и CHANGELOG
-
-Два популярных инструмента (оба читают Conventional Commits):
-
-| Инструмент | Что делает | Где обычно запускается |
-|---|---|---|
-| `standard-version` / `commit-and-tag-version` | локально бампит версию в `package.json`, генерит CHANGELOG, ставит тег | вручную перед релизом |
-| `semantic-release` | полностью автоматически: версия + CHANGELOG + git tag + GitHub Release + npm publish | в CI на каждый push в `main` |
-
-**Конфиг `.releaserc.json` (пример, `semantic-release`):**
-
-```json
-{
-  "branches": ["main"],
-  "plugins": [
-    "@semantic-release/commit-analyzer",
-    "@semantic-release/release-notes-generator",
-    ["@semantic-release/changelog", { "changelogFile": "CHANGELOG.md" }],
-    ["@semantic-release/git", {
-      "assets": ["CHANGELOG.md", "package.json"],
-      "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
-    }],
-    "@semantic-release/github"
-  ]
+export function countDone(tasks: Task[]): number {
+  return tasks.filter((t) => t.done).length
 }
+EOF
+git status -s
 ```
 
-**Конфиг `.versionrc` (пример, `standard-version`):** разделы CHANGELOG по типам:
-
-```json
-{
-  "types": [
-    { "type": "feat", "section": "Features" },
-    { "type": "fix", "section": "Bug Fixes" },
-    { "type": "perf", "section": "Performance" },
-    { "type": "chore", "hidden": true },
-    { "type": "docs", "hidden": true }
-  ]
-}
-```
-
-**Пример вывода** `npx standard-version` (формат настоящий, числа — иллюстративные):
+**Вывод:**
 
 ```
-✔ bumping version in package.json from 1.0.1 to 1.1.0
-✔ created CHANGELOG.md
-✔ outputting changes to CHANGELOG.md
-✔ committing package.json and CHANGELOG.md
-✔ tagging release v1.1.0
-ℹ Run `git push --follow-tags origin main` to publish
+ M src/utils/taskUtils.ts
 ```
 
-**Пример сгенерированного `CHANGELOG.md`** (под Conventional Commits из D.3):
-
-```markdown
-# Changelog
-
-## [1.1.0](https://github.com/itbali/taskflow/compare/v1.0.1...v1.1.0) (2026-06-20)
-
-### Features
-
-* **tasks:** add sortByTitle helper ([048c5fb](https://github.com/itbali/taskflow/commit/048c5fb))
-
-## [1.0.1](https://github.com/itbali/taskflow/compare/v1.0.0...v1.0.1) (2026-06-20)
-
-### Bug Fixes
-
-* **tasks:** guard count against null input ([56231c2](https://github.com/itbali/taskflow/commit/56231c2))
-```
-
-> 💡 Локально CHANGELOG можно собрать даже без инструментов — обычным `git log` с
-> группировкой по типу (см. ДЗ). Инструменты лишь автоматизируют это и связывают с тегом.
-
----
-
-## Часть E. Монорепо vs полирепо
-
-| | Монорепо (один репозиторий на всё) | Полирепо (репозиторий на сервис/пакет) |
-|---|---|---|
-| Атомарный коммит через несколько проектов | да | нет (нужна координация) |
-| Переиспользование кода | просто | через публикацию пакетов |
-| Изоляция прав/релизов | сложнее | естественная |
-| Размер истории/чекаута | растёт быстро | компактный |
-| Версионирование релизов | сложнее (нужны теги вида `pkg@1.2.0`) | по репозиторию = просто |
-| Инструменты | Nx, Turborepo, pnpm workspaces | обычный Git + реестр пакетов |
-
-Краткое правило: **монорепо** хорош для команд, которые часто меняют код «поперёк»
-сервисов и хотят единый CI; **полирепо** — когда сервисы независимы, у них разные
-команды/релизные циклы. Тегам в монорепо обычно дают префикс пакета:
-`git tag -a web-v1.1.0 -m ...`.
-
----
-
-## Часть F. Интеграция с CI/CD (примеры конфигов)
-
-Эти артефакты живут в GitHub/CI, не в `git`-плюмбинге, поэтому приведены как **примеры**
-(формат рабочий).
-
-### F.1. Проверки на PR — GitHub Actions
-
-`.github/workflows/ci.yml` (**пример**):
-
-```yaml
-name: CI
-on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
-jobs:
-  build-test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run build
-      - run: npm test
-```
-
-### F.2. Теги как релизы
-
-`.github/workflows/release.yml` (**пример**) — запускается на push тега `v*`:
-
-```yaml
-name: Release
-on:
-  push:
-    tags: ["v*"]
-jobs:
-  release:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: npm }
-      - run: npm ci && npm run build
-      - uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-```
-
-Локально релиз = поставить тег и запушить его:
+Теперь снимаем правку в файл. `git diff` без аргументов показывает **незастейдженные**
+изменения — перенаправляем его в `.patch`:
 
 ```bash
-git tag -a v1.1.0 -m "Release v1.1.0"
-git push origin v1.1.0          # пуш одного тега
-git push --follow-tags          # пуш коммитов + связанных аннотированных тегов
+git diff > add-count-done.patch
+cat add-count-done.patch
 ```
 
-### F.3. Защита веток (branch protection)
-
-Настраивается в Settings → Branches на GitHub. Типовой набор для `main` (**пример**):
-
-- Require a pull request before merging (запрет прямого push в `main`).
-- Require approvals: 1+ (минимум одно одобрение ревью).
-- Require status checks to pass (зелёный CI из F.1 — обязателен).
-- Require branches to be up to date before merging.
-- Require review from Code Owners (см. F.4).
-- Do not allow bypassing the above settings (даже админам).
-
-> ⚠️ Защита веток — это то, что *технически* заставляет команду соблюдать выбранный
-> workflow. Без неё «нельзя пушить в main» остаётся пожеланием, а не правилом.
-
----
-
-## Часть G. Культура ревью
-
-### G.1. CODEOWNERS
-
-Файл `.github/CODEOWNERS` (**пример**) — авто-назначение ревьюеров по путям:
+**Вывод:**
 
 ```
-# Глобальный владелец по умолчанию
-*                       @itbali
-
-# Логика задач — на ревью к автору модуля
-/src/utils/             @itbali @taskflow-core
-/src/state/             @taskflow-core
-
-# UI-компоненты
-/src/components/        @taskflow-ui
-
-# CI и релизы
-/.github/               @taskflow-devops
+diff --git a/src/utils/taskUtils.ts b/src/utils/taskUtils.ts
+index 3e7a1c2..b9f4d0a 100644
+--- a/src/utils/taskUtils.ts
++++ b/src/utils/taskUtils.ts
+@@ -18,3 +18,7 @@ export function countRemaining(tasks: Task[]): number {
+   return tasks.filter((t) => !t.done).length
+ }
++
++export function countDone(tasks: Task[]): number {
++  return tasks.filter((t) => t.done).length
++}
 ```
 
-В связке с branch protection («Require review from Code Owners») PR в `/src/state/`
-нельзя смёржить без одобрения `@taskflow-core`.
+**Объяснение построчно:**
+- `diff --git a/... b/...` — какой файл и в каком виде («a» = до, «b» = после).
+- `index 3e7a1c2..b9f4d0a 100644` — хеши blob'ов до и после плюс режим файла.
+- `@@ -18,3 +18,7 @@` — заголовок hunk'а: «в старом файле с 18-й строки 3 строки, в
+  новом с 18-й — 7». Знаком вы это уже встречали в модуле 1.
+- Строки с `+` — то, что добавляется. Это и есть «полезный груз» патча.
 
-### G.2. Шаблон Pull Request
-
-`.github/pull_request_template.md` (**пример**):
-
-```markdown
-## Что и зачем
-<!-- 1–2 предложения: какую задачу решает PR -->
-
-## Тип изменения
-- [ ] feat  - [ ] fix  - [ ] refactor  - [ ] docs  - [ ] chore
-
-## Чек-лист
-- [ ] Заголовок PR в формате Conventional Commits
-- [ ] Добавлены/обновлены тесты
-- [ ] `npm run lint` и `npm test` зелёные локально
-- [ ] PR небольшой (< ~400 строк диффа) или разбит на части
-
-## Как проверить
-<!-- шаги ручной проверки -->
-```
-
-### G.3. Принципы здорового ревью
-
-- **Маленькие PR.** Цель — < ~400 строк диффа. Большой PR ревьюят поверхностно.
-- **Draft-PR** для ранней обратной связи: открываете PR в статусе Draft, когда работа не
-  готова, но хотите обсудить подход. CI гоняется, но смёрджить нельзя.
-- **Один PR — одна мысль.** Рефактор и фича в одном PR мешают ревью; разделяйте.
-- **Ревью — про код, не про автора.** Комментарии к строкам, а не «ты неправильно».
-
----
-
-## Типичные ошибки модуля 11
-
-- ❌ Внедрять тяжёлый **Git Flow в маленькой команде с непрерывным деплоем**. Два
-  вечных ветка + release/hotfix-обвязка дают сложность, которую CD-команде нести незачем.
-- ❌ **Гигантские PR** на 2000 строк. Их не ревьюят — их «апрувят». Дробите.
-- ❌ **Ветки, живущие неделями.** Чем дольше ветка в отрыве от `main`, тем больнее
-  слияние. Интегрируйтесь часто (trunk-based доводит это до предела).
-- ❌ Забыть **back-merge хотфикса в develop/main** → фикс «воскресает» как баг в
-  следующем релизе.
-- ❌ Произвольные сообщения коммитов при включённом авто-CHANGELOG — генератор просто
-  пропустит их или соберёт мусор.
-- ❌ Считать «договорились не пушить в main» процессом. Без **branch protection** это не
-  процесс, а надежда.
-- ❌ Путать аннотированный (`-a`) и лёгкий тег для релиза. Релизы — всегда `-a`.
-
----
-
-## Чек-лист модуля 11
-
-- [ ] Могу **аргументированно выбрать workflow** под размер команды и темп релизов.
-- [ ] Объясняю плюсы/минусы GitHub Flow, trunk-based, release-веток и Git Flow.
-- [ ] Знаю формат **Conventional Commits** и как тип коммита влияет на **semver**.
-- [ ] Связываю **теги с релизами** (`git tag -a` → push → CI Release).
-- [ ] Понимаю роль **branch protection**, **CODEOWNERS** и шаблона PR в дисциплине команды.
-- [ ] Умею получить CHANGELOG из истории (вручную через `git log` или авто-инструментом).
-
----
-
-## Шпаргалка команд модуля 11
+Файл `add-count-done.patch` — обычный текст. Его можно приложить к задаче, отправить в
+чат, закоммитить в отдельную папку. Откатим правку из рабочего дерева, как будто мы — та
+**другая** сторона, которая патч ещё не видела:
 
 ```bash
-# --- GitHub Flow ---
-git checkout -b feat/short-thing        # короткая фиче-ветка от main
-git commit -m "feat(scope): ..."        # 1–2 коммита по Conventional Commits
-git push -u origin feat/short-thing     # → открыть PR
-git checkout main && git merge --no-ff feat/short-thing
-git branch -d feat/short-thing          # удалить ветку после merge
+git restore src/utils/taskUtils.ts
+git status -s        # пусто — правок нет
+```
 
-# --- Git Flow: релиз ---
-git checkout -b release/1.1 develop
-git checkout main && git merge --no-ff release/1.1
-git tag -a v1.1.0 -m "Release v1.1.0"
-git checkout develop && git merge --no-ff release/1.1   # back-merge!
+---
 
-# --- Git Flow: хотфикс (от main!) ---
-git checkout -b hotfix/1.0.1 main
-git commit -m "fix(scope): ..."
-git checkout main && git merge --no-ff hotfix/1.0.1
-git tag -a v1.0.1 -m "Hotfix v1.0.1"
-git checkout develop && git merge --no-ff hotfix/1.0.1  # back-merge!
+## Шаг 2. Применить патч — `git apply` (с проверкой `--check`)
 
-# --- Теги и релизы ---
-git tag -a vX.Y.Z -m "Release vX.Y.Z"   # аннотированный тег = релиз
-git tag -n                              # список тегов с сообщениями
-git show vX.Y.Z --no-patch              # метаданные тега + коммит
-git push origin vX.Y.Z                  # запушить один тег
-git push --follow-tags                  # коммиты + аннотированные теги
+Мы «получили» файл `add-count-done.patch`. Перед наложением **всегда** прогоняем сухую
+проверку: ляжет ли патч чисто, ничего при этом не меняя.
 
-# --- Просмотр истории под стратегии ---
-git log --oneline --graph --all --decorate          # весь граф
-git log --oneline --graph --first-parent main       # только релизные точки main
+```bash
+git apply --check add-count-done.patch
+echo "exit code: $?"
+```
 
-# --- CHANGELOG из истории ---
-git log v1.0.0..HEAD --no-merges --pretty=format:"%s (%h)"   # поток conventional
-npx standard-version                    # авто-бамп версии + CHANGELOG + тег
+**Вывод:**
+
+```
+exit code: 0
+```
+
+`--check` ничего не пишет на диск — только проверяет применимость и возвращает код: `0` =
+ляжет чисто, не-`0` = конфликт (контекст разошёлся). Теперь накладываем по-настоящему:
+
+```bash
+git apply add-count-done.patch
+git status -s
+```
+
+**Вывод:**
+
+```
+ M src/utils/taskUtils.ts
+```
+
+**Важно:** `git apply` **не коммитит и не стейджит** — изменения легли в рабочее дерево
+как обычные правки (` M` во второй колонке). Дальше вы сами решаете: `git add` + `commit`,
+доработать или откатить. Патч уровня `diff` истории не несёт — только содержимое.
+
+> 💡 `git apply --stat add-count-done.patch` покажет сводку («какие файлы и на сколько
+> строк»), **не применяя** патч — удобно глянуть масштаб чужой правки до наложения.
+
+---
+
+## Шаг 3. Откатить наложенный патч — `git apply -R`
+
+Передумали или ошиблись патчем? `git apply` умеет применять диф **в обратную сторону**
+флагом `-R` (`--reverse`) — он вычитает изменения, которые до этого добавил.
+
+```bash
+git apply -R add-count-done.patch
+git status -s        # снова пусто — патч «отменён»
+```
+
+`-R` особенно выручает, когда патч уже наложен, а коммита ещё нет: не нужно вспоминать,
+что именно правилось, — Git аккуратно снимет ровно эти строки. Вернём правку обратно и
+на этот раз **закоммитим** — она понадобится для следующих шагов:
+
+```bash
+git apply add-count-done.patch
+git add src/utils/taskUtils.ts
+git commit -m "feat: add countDone helper"
+git log --oneline -1
+```
+
+**Вывод:**
+
+```
+7c1f9d2 feat: add countDone helper
+```
+
+---
+
+## Шаг 4. Патч из индекса — `git diff --cached`
+
+Частая ловушка: вы уже сделали `git add`, а потом `git diff` выдаёт **пусто** — потому
+что `git diff` показывает только то, что **не** в индексе. Для застейдженного нужен флаг
+`--cached` (он же `--staged`).
+
+```bash
+# готовим правку и стейджим её
+printf '\nexport const COUNT_VERSION = 2\n' >> src/utils/taskUtils.ts
+git add src/utils/taskUtils.ts
+
+git diff               # пусто: всё уже в индексе
+git diff --cached > staged.patch
+git apply --stat staged.patch
+```
+
+**Вывод последней команды:**
+
+```
+ src/utils/taskUtils.ts | 2 ++
+ 1 file changed, 2 insertions(+)
+```
+
+Запомнить просто:
+
+```
+git diff            → working tree ↔ index   (ещё не добавленное)
+git diff --cached   → index ↔ HEAD           (уже добавленное, но не закоммиченное)
+git diff HEAD       → working tree ↔ HEAD    (всё разом)
+```
+
+Уберём этот черновик — он был только ради демонстрации `--cached`:
+
+```bash
+git restore --staged src/utils/taskUtils.ts
+git restore src/utils/taskUtils.ts
+rm staged.patch
+```
+
+---
+
+## Шаг 5. Упаковать КОММИТЫ в патчи — `git format-patch`
+
+`git diff` теряет историю: кто автор, когда, с каким сообщением. Когда нужно перенести
+**коммиты целиком**, берут `git format-patch`. Сделаем на ветке ещё один коммит, чтобы
+паковать сразу серию из двух:
+
+```bash
+printf '\nexport function hasDone(tasks: Task[]): boolean {\n  return countDone(tasks) > 0\n}\n' >> src/utils/taskUtils.ts
+git add src/utils/taskUtils.ts && git commit -m "feat: add hasDone helper"
+
+git format-patch main          # все коммиты, которых нет в main
+```
+
+**Вывод:**
+
+```
+0001-feat-add-countDone-helper.patch
+0002-feat-add-hasDone-helper.patch
+```
+
+На каждый коммит — отдельный пронумерованный файл. Заглянем внутрь первого:
+
+```bash
+cat 0001-feat-add-countDone-helper.patch
+```
+
+**Вывод (сокращён):**
+
+```
+From 7c1f9d2e8a4b... Mon Sep 17 00:00:00 2001
+From: itbali <xopycaku@gmail.com>
+Date: Wed, 24 Jun 2026 12:00:00 +0300
+Subject: [PATCH 1/2] feat: add countDone helper
+
+---
+ src/utils/taskUtils.ts | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/utils/taskUtils.ts b/src/utils/taskUtils.ts
+@@ -18,3 +18,7 @@ export function countRemaining(tasks: Task[]): number {
+...
+```
+
+**Объяснение, что добавилось по сравнению с `git diff`:**
+- `From <hash> Mon Sep 17 00:00:00 2001` — служебная «магическая» строка формата mbox
+  (дата-заглушка, не настоящая). По ней `git am` понимает, что это патч-письмо.
+- `From:` / `Date:` / `Subject:` — **метаданные коммита**: автор, дата, сообщение.
+  Именно их `git diff` не сохранял, а `format-patch` несёт.
+- `[PATCH 1/2]` — номер в серии. На той стороне коммиты восстановятся в этом порядке.
+
+> 💡 Частые формы: `git format-patch -1 HEAD` — только последний коммит;
+> `git format-patch HEAD~3` — последние три; `git format-patch main..feature` — всё, чем
+> ветка опередила `main`. Флаг `--stdout > series.patch` сложит всю серию в **один** файл.
+
+---
+
+## Шаг 6. Воссоздать коммиты на другой стороне — `git am`
+
+Теперь сыграем «принимающую» сторону: применим серию патчей на чистой ветке от `main`,
+как будто объектную базу `feature/count-done` мы в глаза не видели — только два файла.
+
+```bash
+git switch -c integrate/from-patches main
+git am 0001-feat-add-countDone-helper.patch 0002-feat-add-hasDone-helper.patch
+```
+
+**Вывод:**
+
+```
+Applying: feat: add countDone helper
+Applying: feat: add hasDone helper
+```
+
+Проверяем, что получились **настоящие коммиты** с сохранённым автором и сообщением:
+
+```bash
+git log --oneline -2
+```
+
+**Вывод:**
+
+```
+b4e0a71 feat: add hasDone helper
+a18c2f5 feat: add countDone helper
+```
+
+**Объяснение:**
+- `git am` не просто наложил правки — он **воссоздал коммиты**: сообщения те же, автор и
+  дата взяты из заголовков патчей. Хеши **другие** (другой родитель — другое место в
+  графе), ровно как при `cherry-pick`.
+- Если патч не ложится, `am` останавливается: чините конфликт и продолжаете
+  `git am --continue` (либо `git am --skip` / `git am --abort`) — логика как у `rebase`.
+
+Так серию изменений можно перенести в репозиторий, у которого **нет** общего remote с
+исходным, — каналом связи были только два текстовых файла.
+
+---
+
+## Шаг 7. Когда патч не ложится чисто — `git apply --3way`
+
+Если на принимающей стороне файл успел измениться, контекст hunk'а разойдётся, и обычный
+`git apply` откажет:
+
+```bash
+git switch main
+printf '\n// примечание команды\n' >> src/utils/taskUtils.ts
+git commit -am "docs: team note in taskUtils"
+git apply --check add-count-done.patch
+```
+
+**Вывод:**
+
+```
+error: patch failed: src/utils/taskUtils.ts:18
+error: src/utils/taskUtils.ts: patch does not apply
+```
+
+Флаг `--3way` просит Git выполнить **трёхстороннее слияние** (как при merge): он находит
+исходный blob по `index`-строке патча и сводит изменения, а неразрешимое помечает
+обычными конфликт-маркерами `<<<<<<<` (модуль 3).
+
+```bash
+git apply --3way add-count-done.patch
+```
+
+**Вывод:**
+
+```
+Applied patch to 'src/utils/taskUtils.ts' with conflicts.
+U src/utils/taskUtils.ts
+```
+
+`U` (unmerged) — дальше всё как с обычным конфликтом: открываете файл, убираете маркеры,
+`git add`. `--3way` почти всегда лучше «голого» `apply`: вместо сухого отказа вы получаете
+максимум автоматики и понятные конфликты. Уберём учебную правку из `main`:
+
+```bash
+git restore --source=HEAD~1 --staged --worktree src/utils/taskUtils.ts
+git reset --hard HEAD~1     # снять учебный коммит "team note"
+```
+
+---
+
+## Типичные ошибки модуля 9
+
+- ❌ **`git diff` пустой после `git add`.** Застейдженное показывает только
+  `git diff --cached`. Не «патч сломался» — вы смотрите не тот срез.
+- ❌ **Ждать, что `git apply` создаст коммит.** `apply` кладёт правки в рабочее дерево и
+  всё. Нужен коммит — делайте `add`+`commit` сами; нужны коммиты «как у автора» — это
+  `format-patch`/`am`, а не `diff`/`apply`.
+- ❌ **Накладывать патч без `--check`.** Сухой прогон за секунду скажет, ляжет ли он. Без
+  него рискуете получить полуприменённый патч и грязное дерево.
+- ❌ **`format-patch` без диапазона.** Голый `git format-patch` берёт коммиты «от
+  upstream до HEAD»; если upstream не настроен — можно нагенерировать лишних файлов.
+  Указывайте базу явно: `format-patch main`, `-1`, `HEAD~3`.
+- ❌ **`git am` вместо `git apply` для патча из `git diff`.** `am` ждёт mbox-заголовки
+  (`From:`/`Subject:`). Скормите ему вывод обычного `git diff` — получите
+  `Patch format detection failed`. diff-патчи накладывает `apply`, коммит-патчи — `am`.
+
+---
+
+## Чек-лист модуля 9
+
+- [ ] Объясняю разницу: **`diff`/`apply`** переносит правки без истории,
+      **`format-patch`/`am`** — целые коммиты с автором/датой/сообщением.
+- [ ] Снимаю незакоммиченное в файл: `git diff > x.patch`, застейдженное — `--cached`.
+- [ ] Перед наложением делаю `git apply --check`, а лишнее откатываю `git apply -R`.
+- [ ] Понимаю, что `git apply` **не** коммитит — это просто правки в рабочем дереве.
+- [ ] Умею собрать серию `git format-patch <base>` и воссоздать её `git am`.
+- [ ] При конфликте применяю `git apply --3way` и разрешаю маркеры как обычный конфликт.
+
+---
+
+## Шпаргалка команд модуля 9
+
+```bash
+# --- снять изменения в патч ---
+git diff > changes.patch              # незастейдженные правки (working ↔ index)
+git diff --cached > staged.patch      # застейдженные (index ↔ HEAD)
+git diff HEAD > all.patch             # всё разом (working ↔ HEAD)
+
+# --- наложить / проверить / откатить (diff-патч) ---
+git apply --check changes.patch       # сухой прогон: ляжет ли (exit 0 = да)
+git apply --stat  changes.patch       # сводка по файлам, не применяя
+git apply         changes.patch       # применить (в рабочее дерево, без коммита)
+git apply -R      changes.patch       # откатить ранее наложенный патч
+git apply --3way  changes.patch       # 3-стороннее слияние при расхождении контекста
+
+# --- коммиты как патчи (с метаданными) ---
+git format-patch main                 # по файлу на коммит сверх main
+git format-patch -1 HEAD              # только последний коммит
+git format-patch main..feature --stdout > series.patch   # вся серия в один файл
+
+# --- воссоздать коммиты из патчей ---
+git am 0001-*.patch 0002-*.patch      # наложить серию, восстановив коммиты
+git am --continue / --skip / --abort  # управление при конфликте (как у rebase)
 ```
 
 ---
 
 ## Домашнее задание
 
-> Живой пример выше сравнивал **GitHub Flow и Git Flow** на сценарии «релиз + хотфикс».
-> В ДЗ — **другой** сценарий и другая стратегия: **trunk-based development**. Те же
-> навыки (выбор стратегии, конвенции коммитов, защита/CI, CHANGELOG), но без повтора.
+Живой пример показал весь цикл на `countDone`/`hasDone`. В ДЗ — **те же навыки на других
+сценариях**. Работайте в своём `taskflow`, в **отдельных учебных ветках** от `main`
+(`hw/...`).
 
-**Легенда.** Команда из **3 человек**, веб-сервис, **деплой каждый день**. Вам нужно
-внедрить **trunk-based development**: короткоживущие ветки (< 1 дня) или прямые коммиты в
-trunk, незрелый код прячется за **feature flag**, релизы — тегами по semver.
+### Задание 1. Передать незакоммиченную правку «коллеге» через `diff`/`apply`
 
-Работайте на **отдельном клоне**, не трогая основной репозиторий:
+Сымитируйте передачу правки между двумя ветками одним файлом, без коммита и без merge.
 
-```bash
-git clone /home/xopycaku/Projects/YT/git-zero-to-hero/taskflow /tmp/taskflow-hw11
-cd /tmp/taskflow-hw11
-git config user.name "Ваше Имя"
-git config user.email "you@example.com"
-```
+**Шаги:**
+1. На ветке `hw/patch-a` от `main` добавьте в `src/utils/taskUtils.ts` функцию-заглушку
+   (например, `export function isEmpty(tasks: Task[]): boolean`), но **не** коммитьте.
+2. Снимите правку: `git diff > isEmpty.patch`, затем `git restore` верните файл.
+3. Переключитесь на новую ветку `hw/patch-b` от `main`.
+4. Прогоните `git apply --check isEmpty.patch`, затем `git apply`, затем закоммитьте.
 
-### Шаги
+**Критерии «сделано»:**
+- `git apply --check` вернул код `0`.
+- Коммит с `isEmpty` есть в `hw/patch-b` и **отсутствует** в `hw/patch-a`.
+- Файл `isEmpty.patch` — обычный текст, открывается в любом редакторе.
 
-1. **Обоснование выбора (письменно).** Создайте `docs/workflow-decision.md` и в 5–8
-   предложениях обоснуйте, почему для команды из 3 человек с ежедневным деплоем
-   **trunk-based** подходит лучше Git Flow. Упомяните стоимость долгоживущих веток и
-   требования к тестам/CI.
+**Подсказки:** если `git diff` выдал пусто — вы случайно сделали `git add` (смотрите
+`--cached`). Откат уже наложенного патча — `git apply -R`.
 
-2. **Настройте trunk-based ветвление.** Сделайте 2–3 коротких изменения в `taskflow`,
-   каждое — отдельной веткой, которая живёт «один сеанс»:
-   - заведите ветку `tb/<краткое-имя>` от `main`;
-   - один-два коммита **строго по Conventional Commits** (`feat:`, `fix:`, `refactor:`);
-   - влейте обратно в `main` (можно `git merge --ff-only` после `rebase`, чтобы получить
-     линейную историю — это характерно для trunk-based) и удалите ветку.
+### Задание 2. Перенести серию коммитов через `format-patch` / `am`
 
-3. **Feature flag.** Одну из фич спрячьте за флаг (например, переменная/константа
-   `FEATURE_SORT = false` в коде), чтобы код был в trunk, но не активен. В сообщении
-   коммита отразите это (`feat(tasks): add sortByTitle behind FEATURE_SORT flag`).
+Повторите перенос **коммитов с историей** между несвязанными ветками.
 
-4. **Conventional Commits → CHANGELOG.** Поставьте релизный тег `v1.0.0` на стартовый
-   `main`, сделайте свои коммиты, затем **сгенерируйте `CHANGELOG.md`** из conventional-
-   коммитов. Можно инструментом (`npx standard-version`) **или** вручную из `git log`,
-   сгруппировав по типам в разделы `### Features` и `### Bug Fixes`. Поставьте тег
-   следующей версии по semver (если есть `feat` → `v1.1.0`, только `fix` → `v1.0.1`).
+**Шаги:**
+1. На ветке `hw/series` от `main` сделайте **два** осмысленных коммита (например, добавьте
+   функцию и тест к ней — каждый отдельным коммитом).
+2. Соберите серию: `git format-patch main` (должно получиться два `.patch`-файла).
+3. Создайте ветку `hw/series-applied` от `main` и примените серию: `git am 0001-*.patch
+   0002-*.patch`.
+4. Сравните сообщения и автора коммитов на обеих ветках.
 
-5. **CODEOWNERS + шаблон PR.** Добавьте `.github/CODEOWNERS` (хотя бы глобальный владелец
-   `*` + один путь, например `/src/state/`) и `.github/pull_request_template.md` с
-   чек-листом (формат заголовка по Conventional Commits, тесты, размер PR). Закоммитьте
-   их как `chore(repo): add CODEOWNERS and PR template`.
+**Критерии «сделано»:**
+- `git format-patch` создал ровно два файла с понятными именами из сообщений коммитов.
+- После `git am` на `hw/series-applied` два коммита с **теми же сообщениями и автором**,
+  но **другими хешами**.
+- `git log --oneline` обеих веток показывает совпадающие сабджекты.
 
-6. **Защита веток (письменно).** В тот же `docs/workflow-decision.md` добавьте короткий
-   раздел «Branch protection»: какие 3–4 правила вы бы включили на GitHub для `main` и
-   почему именно они уместны для trunk-based (подсказка: обязательный зелёный CI здесь
-   критичнее, чем число аппрувов).
+**Подсказки:** одной командой всю серию в один файл — `git format-patch main --stdout >
+series.patch`, и тогда `git am series.patch`. Если `am` упал на конфликте —
+`git am --abort` и начните чисто.
 
-### Критерии «сделано»
+### Задание 3. Применить «не ложащийся» патч через `--3way`
 
-- [ ] `docs/workflow-decision.md` существует, содержит обоснование trunk-based и раздел
-      про branch protection.
-- [ ] `git log --oneline --graph --all` показывает 2–3 короткие ветки, влитые в `main`;
-      история **линейная или почти линейная** (минимум переплетений — это и есть цель).
-- [ ] Все ваши коммиты — валидные **Conventional Commits** (проверьте `git log --oneline`).
-- [ ] В коде есть **feature flag**, и соответствующий коммит это отражает.
-- [ ] Есть `CHANGELOG.md` с разделами по типам и записями для ваших `feat`/`fix`.
-- [ ] Тег следующей версии стоит и согласован с semver (`git tag -n` показывает его).
-- [ ] Есть `.github/CODEOWNERS` и `.github/pull_request_template.md`.
+Воспроизведите ситуацию, когда принимающая сторона ушла вперёд, и разрешите конфликт.
 
-### Подсказки
+**Шаги:**
+1. На `main` снимите патч с какой-нибудь правки `src/utils/taskUtils.ts`
+   (`git diff > p.patch`), затем `git restore`.
+2. Сделайте на `main` коммит, который меняет **те же строки** (чтобы контекст разошёлся).
+3. Убедитесь, что `git apply --check p.patch` теперь падает.
+4. Примените `git apply --3way p.patch`, разрешите конфликт-маркеры, `git add`.
 
-- Линейная история без merge-коммитов: перед вливанием делайте
-  `git checkout main && git merge --ff-only tb/<имя>` (а если main ушёл вперёд —
-  сначала `git rebase main` в ветке). Это типичный «trunk-based» вид графа.
-- CHANGELOG вручную: `git log v1.0.0..HEAD --no-merges --pretty=format:"* %s (%h)"`,
-  затем разнесите строки `feat:` и `fix:` по разделам.
-- Feature flag не обязан быть «настоящим» — достаточно `const FEATURE_SORT = false;`
-  и ветки `if (FEATURE_SORT) { ... }`. Идея в том, что **код в trunk, но выключен**.
-- Semver: только `fix` → бамп PATCH; есть хотя бы один `feat` → бамп MINOR; `feat!`
-  или `BREAKING CHANGE:` → MAJOR.
+**Критерии «сделано»:**
+- Обычный `git apply` отказал с `patch does not apply`.
+- `git apply --3way` дал файл со статусом `U` и конфликт-маркерами.
+- После ручного разрешения и `git add` дерево чистое, правки на месте.
 
-### Самопроверка
-
-1. Почему для команды из 3 человек с ежедневным деплоем долгоживущие ветки опаснее, чем
-   для команды на квартальных релизах? (Ответ: частота интеграции и накопление конфликтов.)
-2. Зачем нужен feature flag, если код всё равно в trunk? (Ответ: позволяет мёрджить
-   незрелый код, не активируя его в проде, — и не держать долгую ветку.)
-3. Какой тег вы поставили и почему именно такой по semver — что в ваших коммитах это
-   определило (`feat` или `fix`)?
-4. В trunk-based, что важнее в branch protection — число аппрувов или обязательный
-   зелёный CI? Обоснуйте.
+**Подсказки:** маркеры `<<<<<<<`/`=======`/`>>>>>>>` — те же, что в модуле 3; принцип
+разрешения идентичен слиянию веток. `--3way` работает, только если исходный blob из
+`index`-строки патча есть в репозитории.

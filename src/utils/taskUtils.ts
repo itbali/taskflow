@@ -32,3 +32,10 @@ export function sortTasks(tasks: Task[]): Task[] {
 export function countRemaining(tasks: Task[]): number {
   return tasks.reduce((acc, t) => (t.done ? acc : acc + 1), 0)
 }
+
+/** Текстовый поиск по заголовку задачи (без учёта регистра). */
+export function searchTasks(tasks: Task[], query: string): Task[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return tasks
+  return tasks.filter((t) => t.title.toLowerCase().includes(q))
+}
