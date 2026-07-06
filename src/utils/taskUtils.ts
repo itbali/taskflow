@@ -20,10 +20,13 @@ export function filterTasks(tasks: Task[], filter: StatusFilter): Task[] {
   }
 }
 
-/** Сортировка: незавершённые сверху, затем новые задачи выше. */
+/** Сортировка: незавершённые сверху, затем по заголовку (A→Z),
+ *  при равных заголовках — новые задачи выше. */
 export function sortTasks(tasks: Task[]): Task[] {
   return [...tasks].sort((a, b) => {
     if (a.done !== b.done) return a.done ? 1 : -1
+    const byTitle = a.title.localeCompare(b.title)
+    if (byTitle !== 0) return byTitle
     return b.createdAt - a.createdAt
   })
 }
