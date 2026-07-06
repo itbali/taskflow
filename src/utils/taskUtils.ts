@@ -20,11 +20,11 @@ export function filterTasks(tasks: Task[], filter: StatusFilter): Task[] {
   }
 }
 
-/** Сортировка: незавершённые сверху, затем по времени создания. */
+/** Сортировка: незавершённые сверху, затем новые задачи выше. */
 export function sortTasks(tasks: Task[]): Task[] {
   return [...tasks].sort((a, b) => {
     if (a.done !== b.done) return a.done ? 1 : -1
-    return a.createdAt - b.createdAt
+    return b.createdAt - a.createdAt
   })
 }
 
