@@ -39,3 +39,8 @@ export function searchTasks(tasks: Task[], query: string): Task[] {
   if (!q) return tasks
   return tasks.filter((t) => t.title.toLowerCase().includes(q))
 }
+
+/** Счётчик выполненных задач. */
+export function countDone(tasks: Task[]): number {
+  return tasks.reduce((acc, t) => (t.done ? acc + 1 : acc), 0)
+}
