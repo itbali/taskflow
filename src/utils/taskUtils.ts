@@ -20,7 +20,7 @@ export function filterTasks(tasks: Task[], filter: StatusFilter): Task[] {
   }
 }
 
-/** Сортировка: незавершённые сверху, затем по заголовку (A→Z),
+/** Сортировка: незавершённые сверху, затем по заголовку (A→Z),   
  *  при равных заголовках — новые задачи выше. */
 export function sortTasks(tasks: Task[]): Task[] {
   return [...tasks].sort((a, b) => {
